@@ -821,7 +821,9 @@
 							_.state.world.countries[tradeResult.trade.cards[i].country].occupants 
 								+= tradeResult.trade.bonusValues[i]; 
 						} 
-							 
+						
+						_.advanceBonusPos();
+						
 						return tradeResult.trade.mainValue;
 					}
 					
