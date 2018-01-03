@@ -306,6 +306,10 @@
 </svg>		
 			`	
 		</script>
+		
+		
+		
+		
 		<script>
 			var global_settings = {
 				WILDCARD_COUNT : 2,
@@ -313,6 +317,121 @@
 				MAX_CARDS : 6
 			};
 		</script>
+		
+		
+		<script>
+			var AI_Helper = {};
+			
+			AI_Helper.calculatePressure = function ( world ) {
+				
+				// for now, simply calculate pressure on a square as average as sum of adjacent
+				// hostile forces.
+				
+				var pressure = [];
+				
+				for ( var i = 0; i < world.countries.length; ++i ) {
+					var total_pressure = 0;
+					for ( var j = 0; j < world.countries[i].neighbors.length; ++j ) {
+						if ( world.countries[world.countries[i].neighbors[j]].owner !=
+							world.countries[i].owner ) {
+							total_pressure += world.countries[world.countries[i].neighbors[j]].occupants;
+						}
+					}
+					pressure.push({
+						country : world.countries[i].id,
+						pressure: total_pressure
+					});
+				}
+				return pressure;
+			}
+			
+			
+			AI_Helper.allocateArmiesInPool = function ( world, player, pool ) {
+				
+				var armies_per_country = [];
+				
+				var pressure = AI_Helper.calculatePressure( world );
+				var total_armies = 0;
+				
+				for ( var i =0; i < pool.length; ++i ) {
+					total_armies += pool[i].occupants;
+				}
+				
+				// highest priority is borders of a country. 
+				
+				var continent_guarding = [];
+				var other = [];
+				
+				var continents_owned = Utils.continentsOwned (  world, player );
+				
+				
+				
+				for ( var i = 0; i < pool.length; ++i ) {
+					var border = false;
+					for ( var j = 0; j < pool[i].neighbors.length; ++j ) {
+						var neighbor = world.countries[pool[i].neighbors[j]];
+						if ( neighbor.continent != pool[i].continent && continents_owned.indexOf(pool[i].continent) > -1 ) {
+							continent_guarding.push({
+								country: pool[i],
+								value: controller.settings.continentArmies[continents_owned.indexOf(pool[i].continent)]
+								
+							});
+							border = true;
+							break;
+						}
+					}
+					if ( !border ) {
+						other.push({
+							country: pool[i],
+							pressure: pressure[pool[i].id].pressure
+						});
+					}
+				}
+				
+				other.sort(function(a,b){
+					return a.pressure > b.pressure ? -1 : 1;
+				});
+				
+				
+				// next, in general, is enemy-facing territory.
+				
+				
+				var allocation = [];
+				
+				var used = pool.length;
+				for ( var i = 0; i < continent_guarding.length; ++i ) {
+					var amount =  Math.min( pressure[continent_guarding[i].country.id].pressure, Math.floor( (total_armies - pool.length) / continent_guarding.length ));
+					console.log(amount);
+					used += amount;
+					allocation.push( {
+						country: continent_guarding[i].country.id,
+						armies: 1 + amount
+					} );
+					
+						
+				}
+				
+				for ( var i = 0; i < other.length; ++i ) {
+					var amount = Math.floor( Math.random() * (total_armies - used));
+					used += amount;
+					allocation.push({
+						country: other[i].country.id,
+						armies: 1 + amount
+					});
+				}
+								
+				allocation[0].armies += total_armies - used;
+				
+				return allocation;
+				
+				
+			}
+		
+		
+		
+		</script>
+		
+		
 		
 		<script>
 			
@@ -354,7 +473,13 @@
 				this.trade = trade;
 			}
 			
+			var PostmoveAction = function ( ) {
+				this.type = "postmove";
+			}
 			
+			var PostmoveResponse = function ( allocation ) {
+				this.allocation = allocation;
+			}
 			
 			// Now to start describing the bots!
 			
@@ -476,13 +601,24 @@
 					
 					return new CardTradeResponse ( true, trade );
 					
+				} else if ( action.type == "postmove" ) {
+					
+					var pools = Utils.getPostmovePools ( state.world, state.identity );
+					
+					var allocation = [];
+					
+					for ( var i= 0; i < pools.length; ++i ) {
+						allocation.push.apply( allocation,
+							AI_Helper.allocateArmiesInPool( state.world, state.identity, pools[i] )
+						);
+					}
+					
+					console.log( new PostmoveResponse(allocation) );
+					
+					return new PostmoveResponse(allocation);
+					
 				}
 			}
-			
-			
-			
-			
-			
 			
 			
 			// Register //
@@ -856,8 +992,6 @@
 						var allotment = 
 							this.callBot( player, new AllocateAction(armies) );
 							
-							
-						console.log( allotment );
 						
 						// we're so trusting haha						
 						for ( var j = 0; j < allotment.allocateList.length; ++j ) {
@@ -870,6 +1004,17 @@
 				this.allotInitialArmies = function() {
 					for ( var i = 0; i < this.players.length; ++i ) {
 						this.allotArmies ( i, _.settings.initialBonusArmies );
+					}
+				}
+				
+				this.postmove = function ( player ) {
+					var allotment = this.callBot( player, new PostmoveAction() );
+					
+					logger.log( _.players[player].name + " is postmoving" );
+					
+					for ( var i = 0; i < allotment.allocation.length; ++i ) {
+						_.state.world.countries[allotment.allocation[i].country].occupants =
+							allotment.allocation[i].armies;
 					}
 				}
 				
@@ -1063,6 +1208,12 @@
 					
 					
 					if ( !shouldContinue ) {
+					
+					
+						// postmove
+						
+						
+						_.postmove( _.state.identity);
 					
 						// risk cards!
 						
@@ -1332,6 +1483,67 @@
 				return new CardStack ( listOfCards );
 				
 			}
+			
+			
+			
+			
+			
+			Utils.getPostmovePools = function ( world, player ) {
+				
+				var country_pool = [];
+				
+				for ( var i = 0; i < world.countries.length; ++i ) {
+					if ( world.countries[i].owner == player ) {
+						var owned_neighbors = [];
+						for ( var j=  0; j < world.countries[i].neighbors.length; ++j ) {
+							if ( world.countries[world.countries[i].neighbors[j]].owner == player ) {
+								owned_neighbors.push(world.countries[i].neighbors[j]);
+							}
+						} 
+						country_pool.push ( {
+							country : world.countries[i].id,
+							pool : -1,
+							neighbors: owned_neighbors
+						} );
+					}
+				}
+								
+				var pool_contents = []; 
+				for ( var i = 0; i < country_pool.length; ++i ) {
+					if ( country_pool[i].pool > -1 ) continue;
+					country_pool[i].pool = pool_contents.length;
+					var contains = [country_pool[i]];
+					var to_visit = country_pool[i].neighbors
+					while ( to_visit.length ) {
+						var new_to_visit = [];
+						for ( var j = 0; j < to_visit.length; ++j ) {
+							if ( to_visit[j].pool > -1 ) continue;
+							var item;
+							for ( var k= 0; k < country_pool.length; ++k ) {
+								if ( country_pool[k].country == to_visit[j] ) {
+									item = country_pool[k];
+									break;
+								}
+							}
+							if ( item.pool == -1 ) {
+								item.pool = pool_contents.length;
+								contains.push(item);
+								new_to_visit.push.apply(new_to_visit, item.neighbors);
+							}
+						}
+						to_visit = new_to_visit;
+					}
+					pool_contents.push(contains);
+				}
+				
+				for ( var i = 0; i < pool_contents.length; ++i ) {
+					for ( var j = 0; j < pool_contents[i].length; ++j  ) {
+						pool_contents[i][j] = world.countries[pool_contents[i][j].country];
+					}
+				}
+				return pool_contents;
+			}
+			
 			
 			
 			var Trade = function ( cards, remaining, bonusValues, mainValue ) {
