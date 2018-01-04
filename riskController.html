@@ -881,7 +881,7 @@
 				this.launchGame = function ( playerList, speed ) {
 					var players = [];
 					for ( var i = 0; i < playerList.length; ++i ) {
-						players.push( new Player( playerList[i], Utils.colors[i] ) );
+						players.push( new Player( playerList[i].name, playerList[i].bot, Utils.colors[i] ) );
 					}
 				
 					window.controller = new Controller ( stateFactory(), players );
@@ -971,7 +971,7 @@
 				
 				this.assignBots = function() {
 					for ( var i = 0; i < this.players.length; ++i ) {
-						this.bots.push( BotLibrary.getRandomBot());
+						this.bots.push( this.players[i].bot );
 						this.botData.push({});
 					}
 				}
@@ -1833,9 +1833,10 @@
 				this.type = type;
 			}
 						
-			var Player = function ( name, color ) {
+			var Player = function ( name, bot, color ) {
 				this.name = name;
 				this.color = color;
+				this.bot = bot;
 				this.cards = [];
 				this.alive = true;
 			}
@@ -1940,6 +1941,13 @@
 						html += "<div class='new_player_field' >";
 						html += "<label for='new_player_" + i + "' >Name of player " + (i+1) + ": </label>";
 						html += "<input class='new_player' value='P" + (i+1) + "' id='new_player_" + i + "' />";
+						html += "<select id='representative_" + i + "' >";
+						var selected = Math.floor(Math.random() * BotLibrary.library.length);
+						for ( var j = 0; j < BotLibrary.library.length; ++j ) {
+							var sel = i == selected ? " selected " : "";
+							html += "<option " + sel + " value='" + j + "' >" + BotLibrary.library[j].name + "</option>";
+						}
+						html += "</select>";
 						html += "</div>";
 						
 					}
@@ -1965,7 +1973,10 @@
 					if ( $("#num_players").val() < 2 ) return alert("You must select at last 2 players");
 					var players = [];
 					for ( var i = 0; i < +$("#num_players").val(); ++i ) {
-						players.push($("#new_player_" + i ).val());
+						players.push({
+							name: $("#new_player_" + i ).val(), 
+							bot: BotLibrary.library[$("#representative_" + i).val()*1]
+						});
 					}
 					window.ecosystem.launchGame(players, $("#speed").val() * 1);
 
