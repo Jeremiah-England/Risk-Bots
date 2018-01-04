@@ -316,6 +316,8 @@
 				COUNTRY_TRADE_BONUS : 2,
 				MAX_CARDS : 6
 			};
+			
+			
 		</script>
 		
 		
@@ -323,7 +325,103 @@
 			var AI_Helper = {};
 			
 			
+			
+			
+			AI_Helper.placeInitialArmies = function ( world, player, armies ) {
+				var _world = Utils.clone(world);
+				
+				var _pool = Utils.countriesOwned ( world, player, true );
+				
+				for ( var i = 0; i < _pool.length; ++i ) {
+					_pool[i] = _world.countries[_pool[i]];
+					_pool[i].occupants = 1;
+				}
+								
+				_pool[0].occupants += armies;
+				
+				var allocation = AI_Helper.allocateArmiesInPool ( _world, player, _pool );
+				
+				for ( var i = 0; i < allocation.length; ++i ) {
+					allocation[i].armies +=  - 1;
+				}
+				
+				return allocation;
+				
+			}
+			
+			AI_Helper.bestOutcomeMove = function ( world, player ) {
+			
+				return AI_Helper.orderedMoves ( world, player, false ) [0];
+			}
+			
+			AI_Helper.orderedMoves = function ( world, player ) {
+				var attackers = Utils.getPotentialAttacks( world, player );
+				var possible = [];
+				for ( var i= 0; i < attackers.length; ++i ) {
+					for ( var j =0 ; j < attackers[i].tos.length; ++j ) {
+						possible.push({
+							from : attackers[i].from,
+							to : attackers[i].tos[j],
+							result: AI_Helper.attackOutcomeExpectation( world, attackers[i].from, attackers[i].tos[j] ),
+							win: AI_Helper.attackWinExpectation ( world, attackers[i].from, attackers[i].tos[j] )[0]
+						});
+					}
+				}
+				
+				possible.sort(function(a,b){
+					if ( a.result[0] - a.result[1] <= 0 &&
+						b.result[0] - b.result[1] <= 0 ) {
+						return a.win > b.win ? -1 : 1;	
+					}
+					return a.result[0] - a.result[1] > b.result[0] - b.result[1] ? -1 : 1;
+				});
+				
+				return possible;
+				
+				
+			}
+			
+			AI_Helper.attackOutcomeExpectation = function ( world, from, to ) {
+				if ( world.countries[from].occupants < 50 && world.countries[to].occupants < 50 ) {
+					return EXPECTED_OUTCOME_ATTACKER_DEFENDER [
+						world.countries[from].occupants
+					] [
+						world.countries[to].occupants
+					];
+				} else {
+					var loss = Math.min ( 
+						world.countries[from].occupants,
+						world.countries[to].occupants
+					);
+					return [
+						world.countries[from].occupants - loss,
+						world.countries[to].occupants - loss
+					]
+				}
+			}
 		
+			AI_Helper.attackWinExpectation = function ( world, from, to ) {
+				if ( world.countries[from].occupants < 50 && world.countries[to].occupants < 50 ) {
+					return EXPECTED_WINS_ATTACKER_DEFENDER [
+						world.countries[from].occupants
+					] [
+						world.countries[to].occupants
+					];
+				} else {
+					var loss = Math.min ( 
+						world.countries[from].occupants,
+						world.countries[to].occupants
+					);
+					return [
+						(world.countries[from].occupants - loss) / 
+							(world.countries[to].occupants - loss + world.countries[from].occupants - loss),
+						(world.countries[to].occupants - loss) / 
+							(world.countries[to].occupants - loss + world.countries[from].occupants - loss)
+					]
+
+				}
+				
+			}
 			
 			AI_Helper.calculatePressure = function ( world ) {
 				
@@ -624,10 +722,100 @@
 				}
 			}
 			
+
+
+
+// This bot incorporates a number of obvious AI enhancements over BasicBot.
+
+			
+			var MediumBot = function( state, action, preferences ) {
+			
+				console.log ( "Medium bot called!" );
+				console.log( state, action, preferences );
+			
+				// 1. Preliminary actions
+				
+				
+				//		A. If preferences not initialized (our own sense of identity), let's do that
+				
+				preferences.minLikelihoodToWin = preferences.minLikelihoodToWin || 0.5 + .2*Math.random();
+				preferences.minLikelihoodIfMustWin = preferences.minLikelihoodIfMustWin || 0.3 + .2*Math.random();
+				preferences.likelihoodToTrade = preferences.likelihoodToTrade || 0.5 + .5*Math.random();
+				
+				
+				//		B. Get list of countries we own
+			
+				var territory = Utils.countriesOwned ( state.world, state.identity, true );
+				
+				
+				// 2. What are we doing? 
+				
+			
+				if ( action.type == "allocate" ) {
+				
+					// Spread out some armies. 
+					// We're simple men, so let's randomly add armies to territories
+
+					
+					
+					var allocateList = AI_Helper.placeInitialArmies( state.world, state.identity, action.armies);
+										
+					return new AllocateResponse(allocateList);
+				
+				
+				} else if ( action.type == "move" ) { 
+					
+					var moveData = state.move;
+					//should we attack? 
+					
+					var suggestedMove = AI_Helper.bestOutcomeMove( state.world, state.identity );
+					
+					if ( ! suggestedMove ) {
+						return new MoveResponse( false );
+					}
+					
+					
+					// otherwise, is it a good move?
+					
+					if ( 
+						(suggestedMove.win > preferences.minLikelihoodToWin) ||
+						( !moveData.hasAnyVictory && suggestedMove.win > preferences.minLikelihoodIfMustWin )
+					 ) {
+						return new MoveResponse ( true, suggestedMove.from, suggestedMove.to );
+					}
+					
+					
+					return new MoveResponse(false);
+				
+						
+				} else if ( action.type == "cardtrade" ) {
+					
+					// let's ignore this for now.
+					var trade =  Utils.getSomeTrade( action.availableCards, state.identity, state.world );
+					
+					if ( ! trade || (! action.required && Math.random() > preferences.likelihoodToTrade) ) {
+						return new CardTradeResponse( false );
+					}
+					
+					
+					
+					return new CardTradeResponse ( true, trade );
+					
+				} else if ( action.type == "postmove" ) {
+					
+					var allocation = AI_Helper.postmove( state.world, state.identity);
+					
+					return new PostmoveResponse(allocation);
+					
+				}
+			}
+
+
 			
 			// Register //
 			
 			BotLibrary.register("BasicBot", BasicBot);
+			BotLibrary.register("MediumBot", MediumBot);
 		
 		
 		
@@ -852,6 +1040,8 @@
 						_.on = false;
 						
 					}
+					
+					_.end();
 				}
 				
 				
@@ -1035,7 +1225,8 @@
 					cardBonusOrder : [
 						4, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60 
 					],
-					curCardBonusPos: 0
+					curCardBonusPos: 0,
+					timeout : null
 				};
 				
 				
@@ -1160,13 +1351,16 @@
 					return _.players[_.state.identity];
 				}
 				
+				this.end = function() {
+					clearTimeout (_.settings.timeout);
+				}	
+				
 				this.autoplay = function() {
 					
 					if ( !_.on ) {
-						setTimeout( _.autoplay, _.settings.playInterval );
+						_.settings.timeout = setTimeout( _.autoplay, _.settings.playInterval );
 						return;
 					}
-					
 					
 					if ( _.state.beginningOfTurn ) {
 					
@@ -1248,7 +1442,7 @@
 					_.render();
 										
 					
-					setTimeout( _.autoplay, _.settings.playInterval );
+					_.settings.timeout = setTimeout( _.autoplay, _.settings.playInterval );
 					
 				}
 				
@@ -1291,6 +1485,10 @@
 				return ret;
 
 				
+			}
+			
+			Utils.clone = function ( object ) {
+				return JSON.parse(JSON.stringify(object));
 			}
 			
 			Utils.colors = 	 [
@@ -1763,6 +1961,7 @@
 				
 				$("#setup").submit(function() {
 					
+					if ( window.controller ) window.controller.end();
 					if ( $("#num_players").val() < 2 ) return alert("You must select at last 2 players");
 					var players = [];
 					for ( var i = 0; i < +$("#num_players").val(); ++i ) {
