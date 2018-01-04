@@ -322,6 +322,9 @@
 		<script>
 			var AI_Helper = {};
 			
+			
+		
+			
 			AI_Helper.calculatePressure = function ( world ) {
 				
 				// for now, simply calculate pressure on a square as average as sum of adjacent
@@ -428,6 +431,23 @@
 			}
 		
 		
+			AI_Helper.postmove = function ( world, player ) {
+					var pools = Utils.getPostmovePools ( world, player );
+					
+					var allocation = [];
+					
+					for ( var i= 0; i < pools.length; ++i ) {
+						allocation.push.apply( allocation,
+							AI_Helper.allocateArmiesInPool( world, player, pools[i] )
+						);
+					}
+					
+					return allocation;
+										
+
+			
+			}
+		
 		
 		</script>
 		
@@ -435,7 +455,26 @@
 		
 		<script>
 			
-			var BotLibrary = [];
+			var BotLibrary = {
+				library : [],
+				
+				
+				
+				
+				
+				getRandomBot : function() {
+					return BotLibrary.library[BotLibrary.library.length * Math.random() | 0];
+				},
+				
+				register : function ( name, bot ) {
+					BotLibrary.library.push({
+						name: name,
+						bot: bot
+					});
+				}
+			
+			
+			}
 			
 			
 			// What sorts of moves can we send to a bot?
@@ -499,13 +538,7 @@
 				
 				//		B. Get list of countries we own
 			
-				var territory = [];
-				
-				for ( var i = 0; i < state.world.countries.length; ++i ) {
-					if ( state.world.countries[i].owner == state.identity ) {
-						territory.push( state.world.countries[i].id );
-					}	
-				}
+				var territory = Utils.countriesOwned ( state.world, state.identity, true );
 				
 				
 				// 2. What are we doing? 
@@ -550,26 +583,7 @@
 											
 						// find all countries with open partners
 						
-						var options = [];
-						
-						function potentialAttack( from, tos ) {
-							this.from = from;
-							this.tos = tos;
-						}	
-						
-						for ( var i = 0; i < territory.length; ++i ) {
-							if ( state.world.countries[territory[i]].occupants < 2 ) continue;
-							var attacks = [];
-							for ( var j = 0; j < state.world.countries[territory[i]].neighbors.length; ++j ) {
-								if ( state.world.countries[ state.world.countries[territory[i]].neighbors[j]].owner != state.identity ) {
-									attacks.push(state.world.countries[territory[i]].neighbors[j]);
-								}
-							}
-							if ( attacks.length ) {
-								options.push(new potentialAttack( territory[i], attacks ))
-							}
-						}
-						
+						var options = Utils.getPotentialAttacks ( state.world, state.identity );
 												
 						if ( !options.length ) {
 							return new MoveResponse( false );
@@ -593,27 +607,17 @@
 					// let's ignore this for now.
 					var trade =  Utils.getSomeTrade( action.availableCards, state.identity, state.world );
 					
-					
 					if ( ! trade || (! action.required && Math.random() > preferences.likelihoodToTrade) ) {
 						return new CardTradeResponse( false );
 					}
+					
 					
 					
 					return new CardTradeResponse ( true, trade );
 					
 				} else if ( action.type == "postmove" ) {
 					
-					var pools = Utils.getPostmovePools ( state.world, state.identity );
-					
-					var allocation = [];
-					
-					for ( var i= 0; i < pools.length; ++i ) {
-						allocation.push.apply( allocation,
-							AI_Helper.allocateArmiesInPool( state.world, state.identity, pools[i] )
-						);
-					}
-					
-					console.log( new PostmoveResponse(allocation) );
+					var allocation = AI_Helper.postmove( state.world, state.identity);
 					
 					return new PostmoveResponse(allocation);
 					
@@ -623,7 +627,7 @@
 			
 			// Register //
 			
-			BotLibrary.push(BasicBot);
+			BotLibrary.register("BasicBot", BasicBot);
 		
 		
 		
@@ -686,7 +690,7 @@
 					return _;
 				}
 				
-				this.launchGame = function ( playerList ) {
+				this.launchGame = function ( playerList, speed ) {
 					var players = [];
 					for ( var i = 0; i < playerList.length; ++i ) {
 						players.push( new Player( playerList[i], Utils.colors[i] ) );
@@ -694,7 +698,7 @@
 				
 					window.controller = new Controller ( stateFactory(), players );
 				
-					window.controller.start();
+					window.controller.start( speed );
 				
 				}
 
@@ -774,12 +778,12 @@
 				
 				this.callBot = function( bot, action ) {
 					this.state.identity = bot;
-					return this.bots[bot]( this.state, action, this.botData[bot] );
+					return this.bots[bot].bot( this.state, action, this.botData[bot] );
 				} 
 				
 				this.assignBots = function() {
 					for ( var i = 0; i < this.players.length; ++i ) {
-						this.bots.push( BotLibrary[BotLibrary.length * Math.random()|0]);
+						this.bots.push( BotLibrary.getRandomBot());
 						this.botData.push({});
 					}
 				}
@@ -863,7 +867,7 @@
 						true,
 						moveResponse.from,
 						moveResponse.to,
-						moveResponse.hasAnyVictory
+						_.state.move.hasAnyVictory
 					);
 					
 					
@@ -1122,7 +1126,8 @@
 					for ( var i = 0; i < _.players.length; ++i ) {
 						var p = _.players[i];
 						var countries = Utils.countriesOwned(_.state.world, i);
-						html += "<div class='player' ><span class='pcol' style='background:" +
+						html += "<div class='player' ><span class='ptype' >" + _.bots[i].name 
+							+ "</span><span class='pcol' style='background:" +
 							p.color + "' ></span>" + p.name + ": " + countries + " countries | " + 
 							p.cards.length + " cards "
 							"</div>";
@@ -1138,14 +1143,13 @@
 					
 				}
 				
-				this.start = function() {
+				this.start = function( speed ) {
+					this.settings.playInterval = speed;
 					this.assignBots();
 					this.assignCountries();
-					this.allotInitialArmies();
-					this.render();
-					
+					this.allotInitialArmies();					
 					this.prepareForGame();
-
+					this.render();
 					this.autoplay();
 				}
 				
@@ -1219,6 +1223,9 @@
 						
 						if ( _.state.move.hasAnyVictory ) {
 							_.awardCard( _.state.identity );
+							logger.log ( "A risk card for " + _.players[_.state.identity].name );
+						} else {
+							logger.log ( "No risk card for " + _.players[_.state.identity].name );
 						}
 						
 						
@@ -1289,6 +1296,34 @@
 			Utils.colors = 	 [
 						"red", "skyblue", "black", "green", "gray", "gold"
 			];
+			
+			Utils.getPotentialAttacks = function( world, player ) {
+			
+				var options = [];
+				
+				var territory = Utils.countriesOwned ( world, player, true );
+				
+				function potentialAttack( from, tos ) {
+					this.from = from;
+					this.tos = tos;
+				}	
+				
+				for ( var i = 0; i < territory.length; ++i ) {
+					if ( world.countries[territory[i]].occupants < 2 ) continue;
+					var attacks = [];
+					for ( var j = 0; j < world.countries[territory[i]].neighbors.length; ++j ) {
+						if ( world.countries[ world.countries[territory[i]].neighbors[j]].owner != player ) {
+							attacks.push(world.countries[territory[i]].neighbors[j]);
+						}
+					}
+					if ( attacks.length ) {
+						options.push(new potentialAttack( territory[i], attacks ))
+					}
+				}
+				
+				return options;
+			}
+
 
 			
 			Utils.computeBonus = function( state ) {
@@ -1683,20 +1718,6 @@
 			}
 			
 			
-			
-			
-			var Game = function() {
-				
-				this.players = [];	
-				
-				this.getState = function() {
-					
-				}
-				
-				
-			}
-			
-			
 			function main() {
 				window. ecosystem = new Ecosystem();
 				window. logger = new Logger();
@@ -1736,6 +1757,10 @@
 					playerSetupPane(+this.value);
 				});
 				
+				$("#speed").change(function() {
+					controller.settings.playInterval = this.value * 1;
+				});
+				
 				$("#setup").submit(function() {
 					
 					if ( $("#num_players").val() < 2 ) return alert("You must select at last 2 players");
@@ -1743,7 +1768,8 @@
 					for ( var i = 0; i < +$("#num_players").val(); ++i ) {
 						players.push($("#new_player_" + i ).val());
 					}
-					window.ecosystem.launchGame(players);
+					window.ecosystem.launchGame(players, $("#speed").val() * 1);
+
 				});	
 			}
 			
@@ -1770,9 +1796,10 @@
 				max-height:400px;
 				overflow-y: scroll;
 				position:absolute;
-				width:200px;
+				width:230px;
 				right: 30;
-				top: 330;
+				padding-top:30;
+				top: 300;
 			
 				
 			}
@@ -1797,9 +1824,15 @@
 			
 			#player_panel {
 				position:fixed;
-				right:30;
+				right:0;
 				bottom: 120;
-				width:200px;
+				width:300px;
+			}
+			
+			.ptype {
+				font-size:small;
+				font-style:italic;
+				margin-right:10px;
 			}
 		</style>
 	</head>
@@ -1830,6 +1863,12 @@
 			</div>
 			<div id="player_panel" ></div>
 			<div id="control_panel" >
+				<select id='speed' >
+					<option value = "100" >Very fast</option>
+					<option value = "1000" >Fast</option>
+					<option value = "2000">Slow</option>
+					<option value = "5000" selected >So slow</option>
+				</select>
 				<button onclick="controller.toggleOn()" >Turn on / off</button>
 			</div>
 		</div>
