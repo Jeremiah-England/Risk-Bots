@@ -370,13 +370,11 @@
 				
 
 			
-			AI_Helper.bestMinimaxMove = function ( world, player ) {
+			AI_Helper.bestMinimaxMove = function ( world, player, max_consider, depth ) {
 				
 				// out of the top 5, what does best?
-				
-				const MAX_CONSIDER = 6, DEPTH = 4;
-				
-				var consequence = AI_Helper.simpleTurnSimulation ( world, player, DEPTH, MAX_CONSIDER );
+								
+				var consequence = AI_Helper.simpleTurnSimulation ( world, player, depth, max_consider );
 				
 				if ( consequence.move_number  == -1 ) {
 					return false;
@@ -986,7 +984,8 @@
 				preferences.minLikelihoodToWin = preferences.minLikelihoodToWin || 0.5 + .2*Math.random();
 				preferences.minLikelihoodIfMustWin = preferences.minLikelihoodIfMustWin || 0.3 + .2*Math.random();
 				preferences.likelihoodToTrade = preferences.likelihoodToTrade || 0.5 + .5*Math.random();
-				
+				preferences.max_consider = preferences.max_consider || 6;
+				preferences.depth = preferences.depth || 6;
 				
 				//		B. Get list of countries we own
 			
@@ -1013,16 +1012,18 @@
 					var moveData = state.move;
 					//should we attack? 
 					
-					var suggestedMove = AI_Helper.bestMinimaxMove( state.world, state.identity );
+					var suggestedMove = AI_Helper.bestMinimaxMove( state.world, state.identity, preferences.max_consider, preferences.depth );
 					
 					if ( ! suggestedMove ) {
 						return new MoveResponse( false );
 					}
 					
+					return new MoveResponse ( true, suggestedMove.from, suggestedMove.to );
+					
 					
 					// otherwise, is it a good move?
 					
-					if ( 
+					/*if ( 
 						(suggestedMove.win > preferences.minLikelihoodToWin) ||
 						( !moveData.hasAnyVictory && suggestedMove.win > preferences.minLikelihoodIfMustWin )
 					 ) {
@@ -1030,7 +1031,7 @@
 					}
 					
 					
-					return new MoveResponse(false);
+					return new MoveResponse(false);*/
 				
 						
 				} else if ( action.type == "cardtrade" ) {
@@ -2304,6 +2305,7 @@
 				right: 30;
 				padding-top:30;
 				top: 300;
+				z-index:2;
 			
 				
 			}
