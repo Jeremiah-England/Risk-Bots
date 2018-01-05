@@ -314,7 +314,7 @@
 			var global_settings = {
 				WILDCARD_COUNT : 2,
 				COUNTRY_TRADE_BONUS : 2,
-				MAX_CARDS : 6
+				MAX_CARDS : 5
 			};
 			
 			
@@ -325,8 +325,167 @@
 			var AI_Helper = {};
 			
 			
+			// The interesting thing is that the moves are deterministic if we assume
+			// average outcomes (which is safest.)
+			// So, we can really look at the moves to a certain depth. Basically, it's a minimax
+			// algorithm. We can look down the game tree ... oh, I don't know, 
+
+			AI_Helper.Consequence = function ( armies, territories, opponent_continents, continents, players, worldCount ) {
+				this.armies = armies;
+				this.territories = territories;
+				this.opponent_continents = opponent_continents;
+				this.continents = continents;
+				this.players = players;
+				this.worldCount = worldCount;
+			}
 			
+			AI_Helper.Consequence.prototype.combine = function ( c1, c2 ) {
+				return new AI_Helper.Consequence (
+					c1.armies + c2.armies,
+					c1.territories + c2.territories,
+					c1.opponent_continents + c2.opponent_continents,
+					c1.continents + c2.continents,
+					c1.players + c2.players,
+					c1.worldCount + c2.worldCount
+				
+				);
+			}
 			
+			AI_Helper.Consequence.prototype.better = function ( c1, c2 ) {
+				if ( c1.players == c2.players ) {
+					if ( c1.continents == c2.continents ) {
+						if ( c1.opponent_continents == c2.opponent_continents ){
+							if ( c1.territories == c2.territories ) {
+								return c1.armies > c2.armies;
+							}
+							return c1.territories > c2.territories;
+						}
+						return c1.opponent_continents < c2.opponent_continents;
+					}
+					return c1.continents > c2.continents;
+				
+				}
+				return c1.players < c2.players;
+			}
+				
+
+			
+			AI_Helper.bestMinimaxMove = function ( world, player ) {
+				
+				// out of the top 5, what does best?
+				
+				const MAX_CONSIDER = 6, DEPTH = 4;
+				
+				var consequence = AI_Helper.simpleTurnSimulation ( world, player, DEPTH, MAX_CONSIDER );
+				
+				if ( consequence.move_number  == -1 ) {
+					return false;
+				}
+				
+				var orderedMoves = AI_Helper.orderedMoves( world, player);
+				
+				return orderedMoves[consequence.move_number];
+				
+				
+			}
+			
+			AI_Helper.evaluateWorld = function ( world, player ) {
+				var armies = Utils.armyCount ( world, player );
+				var territories = Utils.countriesOwned ( world, player );
+				var opponent_continents = Utils.opponentContinentsOwned ( world, player ).length;
+				var continents = Utils.continentsOwned ( world, player ).length;
+				var players = Utils.countPlayers ( world );
+
+				var current = new AI_Helper.Consequence (
+					armies,
+					territories,
+					opponent_continents,
+					continents,
+					players,
+					1
+				);
+				
+				return current;
+				
+			}
+			
+			AI_Helper.simpleTurnSimulation = function ( world, player, depth, max_consider  ) {
+			
+				// keep making moves (and assume average
+				
+				var current = AI_Helper.evaluateWorld ( world, player );
+
+				if ( depth == 0 ) {
+					return {
+						consequence: current,
+						move_number: -1
+					}
+				}
+				
+				// get moves to do...
+				
+				var orderedMoves = AI_Helper.orderedMoves ( world, player );
+				
+				var play = Math.min ( max_consider, orderedMoves.length );
+				
+				var result = current;
+				
+				var move_number = -1;
+				
+				for ( var i = 0; i < play; ++i ) {		
+					
+					var _world = AI_Helper.applyMove ( world, orderedMoves[i] );
+					
+					var consequence = AI_Helper.simpleTurnSimulation ( 
+						_world,
+						player,
+						depth - 1,
+						max_consider
+					).consequence;
+					//console.log( "depth: " + depth + "; move: " + i, consequence )
+					
+					if ( ! result.better ( result, consequence )) {
+						result = consequence;
+						move_number = i;
+					}
+					
+						
+				}
+				
+				return {
+					consequence: result,
+					move_number: move_number
+				};
+				
+			
+			}
+			
+			AI_Helper.applyMove = function ( world, move ) {
+				var result = [
+					Math.round(move.result[0]),
+					Math.round(move.result[1])
+				];
+				
+				var win = move.win;
+				
+				var _world = Utils.clone ( world );
+				
+				// it's hard to do this quite right...
+				if ( win >= 0.5 ) {
+					// we won
+					
+					
+					_world.countries[move.from].occupants = 1;
+					_world.countries[move.to].occupants = result[0];
+					_world.countries[move.to].owner = _world.countries[move.from].owner;
+				} else {
+					_world.countries[move.from].occupants = 1;
+					_world.countries[move.to].occupants = result[1];
+				}
+				
+				return _world;
+			}
+						
 			AI_Helper.placeInitialArmies = function ( world, player, armies ) {
 				var _world = Utils.clone(world);
 				
@@ -384,17 +543,17 @@
 			AI_Helper.attackOutcomeExpectation = function ( world, from, to ) {
 				if ( world.countries[from].occupants < 50 && world.countries[to].occupants < 50 ) {
 					return EXPECTED_OUTCOME_ATTACKER_DEFENDER [
-						world.countries[from].occupants
+						world.countries[from].occupants - 1
 					] [
 						world.countries[to].occupants
 					];
 				} else {
 					var loss = Math.min ( 
-						world.countries[from].occupants,
+						world.countries[from].occupants - 1,
 						world.countries[to].occupants
 					);
 					return [
-						world.countries[from].occupants - loss,
+						world.countries[from].occupants -1 - loss,
 						world.countries[to].occupants - loss
 					]
 				}
@@ -403,20 +562,20 @@
 			AI_Helper.attackWinExpectation = function ( world, from, to ) {
 				if ( world.countries[from].occupants < 50 && world.countries[to].occupants < 50 ) {
 					return EXPECTED_WINS_ATTACKER_DEFENDER [
-						world.countries[from].occupants
+						world.countries[from].occupants - 1
 					] [
 						world.countries[to].occupants
 					];
 				} else {
 					var loss = Math.min ( 
-						world.countries[from].occupants,
+						world.countries[from].occupants - 1,
 						world.countries[to].occupants
 					);
 					return [
-						(world.countries[from].occupants - loss) / 
-							(world.countries[to].occupants - loss + world.countries[from].occupants - loss),
+						(world.countries[from].occupants - 1- loss) / 
+							(world.countries[to].occupants - loss + world.countries[from].occupants - 1- loss),
 						(world.countries[to].occupants - loss) / 
-							(world.countries[to].occupants - loss + world.countries[from].occupants - loss)
+							(world.countries[to].occupants - loss + world.countries[from].occupants - 1- loss)
 					]
 
 				}
@@ -811,11 +970,99 @@
 			}
 
 
+
+			// this bot adds in some minimax-type features.
+			
+			var HardBot = function( state, action, preferences ) {
+			
+				console.log ( "Hard bot called!" );
+				console.log( state, action, preferences );
+			
+				// 1. Preliminary actions
+				
+				
+				//		A. If preferences not initialized (our own sense of identity), let's do that
+				
+				preferences.minLikelihoodToWin = preferences.minLikelihoodToWin || 0.5 + .2*Math.random();
+				preferences.minLikelihoodIfMustWin = preferences.minLikelihoodIfMustWin || 0.3 + .2*Math.random();
+				preferences.likelihoodToTrade = preferences.likelihoodToTrade || 0.5 + .5*Math.random();
+				
+				
+				//		B. Get list of countries we own
+			
+				var territory = Utils.countriesOwned ( state.world, state.identity, true );
+				
+				
+				// 2. What are we doing? 
+				
+			
+				if ( action.type == "allocate" ) {
+				
+					// Spread out some armies. 
+					// We're simple men, so let's randomly add armies to territories
+
+					
+					
+					var allocateList = AI_Helper.placeInitialArmies( state.world, state.identity, action.armies);
+										
+					return new AllocateResponse(allocateList);
+				
+				
+				} else if ( action.type == "move" ) { 
+					
+					var moveData = state.move;
+					//should we attack? 
+					
+					var suggestedMove = AI_Helper.bestMinimaxMove( state.world, state.identity );
+					
+					if ( ! suggestedMove ) {
+						return new MoveResponse( false );
+					}
+					
+					
+					// otherwise, is it a good move?
+					
+					if ( 
+						(suggestedMove.win > preferences.minLikelihoodToWin) ||
+						( !moveData.hasAnyVictory && suggestedMove.win > preferences.minLikelihoodIfMustWin )
+					 ) {
+						return new MoveResponse ( true, suggestedMove.from, suggestedMove.to );
+					}
+					
+					
+					return new MoveResponse(false);
+				
+						
+				} else if ( action.type == "cardtrade" ) {
+					
+					// let's ignore this for now.
+					var trade =  Utils.getSomeTrade( action.availableCards, state.identity, state.world );
+					
+					if ( ! trade || (! action.required && Math.random() > preferences.likelihoodToTrade) ) {
+						return new CardTradeResponse( false );
+					}
+					
+					
+					
+					return new CardTradeResponse ( true, trade );
+					
+				} else if ( action.type == "postmove" ) {
+					
+					var allocation = AI_Helper.postmove( state.world, state.identity);
+					
+					return new PostmoveResponse(allocation);
+					
+				}
+			}
+
+
+
 			
 			// Register //
 			
 			BotLibrary.register("BasicBot", BasicBot);
 			BotLibrary.register("MediumBot", MediumBot);
+			BotLibrary.register("HardBot", HardBot);
 		
 		
 		
@@ -1486,6 +1733,34 @@
 
 				
 			}
+
+			Utils.opponentContinentsOwned = function ( world, player ) {
+				
+				var players = [];
+				for ( var i =0; i < 6; ++i ) {
+					var continentHas = new Array(controller.settings.continentSizes.length);
+					continentHas.fill(0);
+					players.push(continentHas);				
+				}
+				
+				for ( var i = 0 ; i < world.countries.length; ++i ) {
+						++players [world.countries[i].owner ][ world.countries[i].continent];
+				}
+
+				var ret = [];				
+				for ( var i = 0; i < players.length; ++i ) {
+					if ( i == player ) continue;
+					for ( var j =0; j < players[i].length; ++j ) {
+						if ( players[i][j] == controller.settings.continentSizes[j] ) {
+							ret.push(j);
+						}
+					}
+				}
+			
+				return ret;
+
+				
+			}
 			
 			Utils.clone = function ( object ) {
 				return JSON.parse(JSON.stringify(object));
@@ -1521,7 +1796,16 @@
 				
 				return options;
 			}
-
+			
+			Utils.countPlayers = function ( world ) {
+				var players = [];
+				for ( var i= 0; i < world.countries.length; ++i ) {
+					if ( players.indexOf(world.countries[i].owner) == -1 ) {
+						players.push( world.countries[i].owner );
+					}
+				}
+				return players.length;
+			}
 
 			
 			Utils.computeBonus = function( state ) {
@@ -1688,6 +1972,16 @@
 				}
 				
 				return new Trade( tradeCards, remaining, bonusCards, controller.getTradeValue() );
+			}
+			
+			Utils.armyCount = function ( world, player ) {
+				var count = 0;
+				for ( var i = 0; i < world.countries.length; ++i ) {
+					if ( world.countries[i].owner == player ) {
+						count += world.countries[i].occupants;
+					}
+				}
+				return count;
 			}
 			
 			Utils.binarySearch = function (list, value){
