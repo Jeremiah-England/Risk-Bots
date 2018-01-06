@@ -330,13 +330,14 @@
 			// So, we can really look at the moves to a certain depth. Basically, it's a minimax
 			// algorithm. We can look down the game tree ... oh, I don't know, 
 
-			AI_Helper.Consequence = function ( armies, territories, opponent_continents, continents, players, acceptableArmyRatio, hasRiskCard ) {
+			AI_Helper.Consequence = function ( armies, territories, opponent_continents, continents, players, acceptableArmyRatio, isDominating, hasRiskCard ) {
 				this.armies = armies;
 				this.territories = territories;
 				this.opponent_continents = opponent_continents;
 				this.continents = continents;
 				this.players = players;
 				this.acceptableArmyRatio = acceptableArmyRatio;
+				this.isDominating = isDominating;
 				this.hasRiskCard = hasRiskCard;
 			}
 			
@@ -346,25 +347,28 @@
 			
 			
 			AI_Helper.Consequence.prototype.better = function ( c1, c2 ) {
-			
-				// one of our goals is to be conservative at times. The first two are basically no-brainers.
 				if ( c1.players == c2.players ) {
 					if ( c1.continents == c2.continents ) {
 						if ( c1.opponent_continents == c2.opponent_continents ){
 							if ( c1.hasRiskCard == c2.hasRiskCard ) {
-								if ( c1.acceptableArmyRatio == c2.acceptableArmyRatio ) {
-									if ( c1.armies == c2.armies ) {
-										return c1.territories > c2.territories;
-									}
-									return c1.armies > c2.armies;
-									
-									
-									/*if ( c1.territories == c2.territories ) {
+								if ( !c1.isDominating && !c2.isDominating ) {
+									if ( c1.acceptableArmyRatio == c2.acceptableArmyRatio ) {
+										if ( c1.armies == c2.armies ) {
+											return c1.territories > c2.territories;
+										}
 										return c1.armies > c2.armies;
 									}
-									return c1.territories > c2.territories;*/
+									return c1.acceptableArmyRatio;
+								} else if ( ! c2.isDominating ) {
+									return true;
+								} else if ( ! c1.isDominating ) {
+									return false;
+								} else {
+									if ( c1.territories == c2.territories ) {
+										return c1.armies > c2.armies;
+									}
+									return c1.territories > c2.territories;
 								}
-								return c1.acceptableArmyRatio;
 							}
 							return c1.hasRiskCard;
 						}
@@ -421,12 +425,13 @@
 				var continents = Utils.continentsOwned ( world, player ).length;
 				var players = Utils.countPlayers ( world );
 				
-				var mpt = Utils.menPerTerritory;
+				var mpt = Utils.menPerTerritory( world, player );
 				
 				// the following magic constant makes either more or less aggressive
 				// if greater than 1, then relatively less agressive.
 				// supported by experimental evidence ( or not )
 				var acceptableArmyRatio = mpt.ratio >= 1.5 * mpt.opponentRatio;
+				var isDominating = mpt.ratio * territories >= 1.5 * mpt.opponentRatio * ( world.countries.length - territories );
 
 				var current = new AI_Helper.Consequence (
 					armies,
@@ -435,6 +440,7 @@
 					continents,
 					players,
 					acceptableArmyRatio,
+					isDominating,
 					world.hasVictory
 				);
 				return current;
