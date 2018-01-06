@@ -272,7 +272,7 @@
   </g>
   <text x="6688" y="2172" class="fil9 {C25} fnt2">Ukraine {25}</text>
   <g transform="matrix(0.81693 -0.576736 0.576736 0.81693 -958.521 1820.12)">
-   <text x="5429" y="4134" class="fil9 {C25} fnt4">Scandinavia {24}</text>
+   <text x="5429" y="4134" class="fil9 {C24} fnt4">Scandinavia {24}</text>
   </g>
   <text x="9318" y="5256" class="fil9 {C12} fnt6">Western </text>
   <text x="9279" y="5372" class="fil9 {C12} fnt6">Australia {12}</text>
@@ -330,45 +330,74 @@
 			// So, we can really look at the moves to a certain depth. Basically, it's a minimax
 			// algorithm. We can look down the game tree ... oh, I don't know, 
 
-			AI_Helper.Consequence = function ( armies, territories, opponent_continents, continents, players, worldCount ) {
+			AI_Helper.Consequence = function ( armies, territories, opponent_continents, continents, players, acceptableArmyRatio, hasRiskCard ) {
 				this.armies = armies;
 				this.territories = territories;
 				this.opponent_continents = opponent_continents;
 				this.continents = continents;
 				this.players = players;
-				this.worldCount = worldCount;
+				this.acceptableArmyRatio = acceptableArmyRatio;
+				this.hasRiskCard = hasRiskCard;
 			}
 			
-			AI_Helper.Consequence.prototype.combine = function ( c1, c2 ) {
-				return new AI_Helper.Consequence (
-					c1.armies + c2.armies,
-					c1.territories + c2.territories,
-					c1.opponent_continents + c2.opponent_continents,
-					c1.continents + c2.continents,
-					c1.players + c2.players,
-					c1.worldCount + c2.worldCount
-				
-				);
-			}
+			
+			
+			// this is the most important part of the minimax algorithm.
+			
 			
 			AI_Helper.Consequence.prototype.better = function ( c1, c2 ) {
+			
+				// one of our goals is to be conservative at times. The first two are basically no-brainers.
 				if ( c1.players == c2.players ) {
 					if ( c1.continents == c2.continents ) {
 						if ( c1.opponent_continents == c2.opponent_continents ){
-							if ( c1.territories == c2.territories ) {
-								return c1.armies > c2.armies;
+							if ( c1.hasRiskCard == c2.hasRiskCard ) {
+								if ( c1.acceptableArmyRatio == c2.acceptableArmyRatio ) {
+									if ( c1.armies == c2.armies ) {
+										return c1.territories > c2.territories;
+									}
+									return c1.armies > c2.armies;
+									
+									
+									/*if ( c1.territories == c2.territories ) {
+										return c1.armies > c2.armies;
+									}
+									return c1.territories > c2.territories;*/
+								}
+								return c1.acceptableArmyRatio;
 							}
-							return c1.territories > c2.territories;
+							return c1.hasRiskCard;
 						}
 						return c1.opponent_continents < c2.opponent_continents;
 					}
 					return c1.continents > c2.continents;
-				
 				}
 				return c1.players < c2.players;
 			}
 				
-
+			AI_Helper.sharedMinimaxMove = function ( world, player, max_consider, depth  ) {
+				
+				var consequence = AI_Helper.evaluateWorld( world, player);
+				var move = -1;
+				for ( var i = 0 ; i < max_consider.length; ++i ) {
+					var consequence2 = AI_Helper.simpleTurnSimulation (
+						world, player, depth[i], max_consider[i]
+					);
+					if ( consequence2.consequence.better( consequence2.consequence, consequence ) ) {
+						move = consequence2.move_number;
+						consequence = consequence2.consequence;
+					}
+				}
+				
+				if ( move  == -1 ) {
+					return false;
+				}
+				
+				var orderedMoves = AI_Helper.orderedMoves( world, player);
+				
+				return orderedMoves[move];
+				
+			}
 			
 			AI_Helper.bestMinimaxMove = function ( world, player, max_consider, depth ) {
 				
@@ -383,8 +412,6 @@
 				var orderedMoves = AI_Helper.orderedMoves( world, player);
 				
 				return orderedMoves[consequence.move_number];
-				
-				
 			}
 			
 			AI_Helper.evaluateWorld = function ( world, player ) {
@@ -393,6 +420,13 @@
 				var opponent_continents = Utils.opponentContinentsOwned ( world, player ).length;
 				var continents = Utils.continentsOwned ( world, player ).length;
 				var players = Utils.countPlayers ( world );
+				
+				var mpt = Utils.menPerTerritory;
+				
+				// the following magic constant makes either more or less aggressive
+				// if greater than 1, then relatively less agressive.
+				// supported by experimental evidence ( or not )
+				var acceptableArmyRatio = mpt.ratio >= 1.5 * mpt.opponentRatio;
 
 				var current = new AI_Helper.Consequence (
 					armies,
@@ -400,12 +434,13 @@
 					opponent_continents,
 					continents,
 					players,
-					1
+					acceptableArmyRatio,
+					world.hasVictory
 				);
-				
 				return current;
-				
 			}
+			
+			AI_Helper
 			
 			AI_Helper.simpleTurnSimulation = function ( world, player, depth, max_consider  ) {
 			
@@ -440,7 +475,6 @@
 						depth - 1,
 						max_consider
 					).consequence;
-					//console.log( "depth: " + depth + "; move: " + i, consequence )
 					
 					if ( ! result.better ( result, consequence )) {
 						result = consequence;
@@ -476,6 +510,7 @@
 					_world.countries[move.from].occupants = 1;
 					_world.countries[move.to].occupants = result[0];
 					_world.countries[move.to].owner = _world.countries[move.from].owner;
+					_world.hasVictory = true;
 				} else {
 					_world.countries[move.from].occupants = 1;
 					_world.countries[move.to].occupants = result[1];
@@ -984,8 +1019,13 @@
 				preferences.minLikelihoodToWin = preferences.minLikelihoodToWin || 0.5 + .2*Math.random();
 				preferences.minLikelihoodIfMustWin = preferences.minLikelihoodIfMustWin || 0.3 + .2*Math.random();
 				preferences.likelihoodToTrade = preferences.likelihoodToTrade || 0.5 + .5*Math.random();
-				preferences.max_consider = preferences.max_consider || 6;
-				preferences.depth = preferences.depth || 6;
+				
+							// i. We can't consider all moves to a suitable depth, so we consider different
+						 	//		sets of moves to different depths.
+				preferences.max_consider = preferences.max_consider || [5,8,12,15];
+				preferences.depth = preferences.depth || [7,5,4,3];
+				
+				
 				
 				//		B. Get list of countries we own
 			
@@ -997,10 +1037,6 @@
 			
 				if ( action.type == "allocate" ) {
 				
-					// Spread out some armies. 
-					// We're simple men, so let's randomly add armies to territories
-
-					
 					
 					var allocateList = AI_Helper.placeInitialArmies( state.world, state.identity, action.armies);
 										
@@ -1012,7 +1048,16 @@
 					var moveData = state.move;
 					//should we attack? 
 					
-					var suggestedMove = AI_Helper.bestMinimaxMove( state.world, state.identity, preferences.max_consider, preferences.depth );
+					
+					if ( moveData.isAttacking ) {
+						//should speed things up
+						return new MoveResponse ( true, moveData.from, moveData.to );
+					}
+					
+					var _world = Utils.clone ( state.world );
+					_world.hasVictory = moveData.hasAnyVictory;
+					
+					var suggestedMove = AI_Helper.sharedMinimaxMove( _world, state.identity, preferences.max_consider, preferences.depth );
 					
 					if ( ! suggestedMove ) {
 						return new MoveResponse( false );
@@ -1239,10 +1284,13 @@
 					}
 					
 					var pos = -1;
-					while ( ++pos, tot < base ) allocate[pos]++;
+										
+					while ( ++pos, tot++ < _.state.world.countries.length ) allocate[pos]++;
 					for ( var i = 1; i < allocate.length; ++i ) {
 						allocate[i] = allocate[i-1] + allocate[i];
 					}
+					
+					console.log(allocate);
 					
 					
 					//randomly shuffle cards...
@@ -1259,6 +1307,8 @@
 						this.state.world.countries[countries[i]].owner = curOwner;
 						this.state.world.countries[countries[i]].occupants = 1;
 					}
+					
+					console.log ( _.state.world );
 				
 				}
 				
@@ -1443,9 +1493,15 @@
 					
 				}
 				
-				this.allotInitialArmies = function() {
+				this.allotInitialArmies = function() { 
+					var owned =  new Array(_.players.length);
+					owned.fill(0);
+					
+					for ( var i = 0; i < _.state.world.countries.length; ++i ) {
+						owned[_.state.world.countries[i].owner]++;
+					}	
 					for ( var i = 0; i < this.players.length; ++i ) {
-						this.allotArmies ( i, _.settings.initialBonusArmies );
+						this.allotArmies ( i, _.settings.initialBonusArmies[_.players.length] - owned[i] );
 					}
 				}
 				
@@ -1469,10 +1525,13 @@
 					continentSizes: [
 						4, 6, 4, 9, 7, 12
 					],
-					initialBonusArmies: 15,
+					initialBonusArmies: [
+						0, 0, 40, 35, 30, 25, 20
+					],
 					cardBonusOrder : [
 						4, 6, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60 
 					],
+					
 					curCardBonusPos: 0,
 					timeout : null
 				};
@@ -1579,6 +1638,7 @@
 				this.prepareForGame = function() {
 					this.state.identity = 0;
 					this.beginningOfTurn = true;
+					this.isNewRound = true;
 					
 				}
 				
@@ -1613,8 +1673,9 @@
 					if ( _.state.beginningOfTurn ) {
 					
 					
-						if ( _.state.identity == 0 ) {
+						if ( _.isNewRound ) {
 							logger.log("Round " + _.state.round, true );
+							_.isNewRound = false;
 						}
 						
 						logger.log("Current turn: " + _.players[_.state.identity].name, true);
@@ -1675,12 +1736,15 @@
 					
 						_.state.beginningOfTurn = true;
 						
+						var prev_player = _.state.identity;
+						
 						do {
 							_.state.identity = (_.state.identity + 1) % _.players.length;
 						} while ( !_.players[_.state.identity].alive );
 						
-						if ( _.state.identity == 0 ) {
+						if ( _.state.identity < prev_player ) {
 							++_.state.round;
+							_.isNewRound = true;
 						}
 						
 					}			
@@ -1761,6 +1825,24 @@
 				return ret;
 
 				
+			}
+			
+			Utils.menPerTerritory = function ( world, player ) {
+				var totalOpponentMen = 0, totalMen = 0;
+				var totalOpponentTerritories = 0, totalTerritories = 0;
+				for ( var i = 0; i < world.countries.length; ++i ) {
+					if ( world.countries[i].owner == player ) {
+						++totalTerritories;
+						totalMen += world.countries[i].occupants;
+					} else {
+						++totalOpponentTerritories;
+						totalOpponentMen += world.countries[i].occupants;
+					}
+				}
+				return {
+					ratio: totalMen / totalTerritories,
+					opponenRatio: totalOpponentMen / totalOpponentTerritories 
+				};
 			}
 			
 			Utils.clone = function ( object ) {
@@ -2239,7 +2321,7 @@
 						html += "<select id='representative_" + i + "' >";
 						var selected = Math.floor(Math.random() * BotLibrary.library.length);
 						for ( var j = 0; j < BotLibrary.library.length; ++j ) {
-							var sel = i == selected ? " selected " : "";
+							var sel = j == selected ? " selected " : "";
 							html += "<option " + sel + " value='" + j + "' >" + BotLibrary.library[j].name + "</option>";
 						}
 						html += "</select>";
